@@ -1,92 +1,53 @@
 import multiprocessing
-import time
-import random
-from datetime import datetime
-import statistics
-import os
-import signal
+from generador import generador
+from analizador import analizador
+from verificador import verificador
+from blockchain import agregar_resultados_a_blockchain
 
-# --- Generador de señales biométricas ---
-def generador(pipe_a, pipe_b, pipe_c):
-    for i in range(60):
-        muestra = {
-            "timestamp": datetime.now().isoformat(),
-            "Frecuencia Cardiaca": random.randint(60, 180),
-            "Presion Sanguinea": [random.randint(110, 180), random.randint(70, 110)],
-            "Oxigeno en Sangre": random.randint(90, 100)
-        }
-
-        pipe_a.send(muestra)
-        pipe_b.send(muestra)
-        pipe_c.send(muestra)
-
-        print(f"[Generador] Enviada muestra {i+1}: {muestra}")
-        time.sleep(1)
-
-    pipe_a.send("FIN")
-    pipe_b.send("FIN")
-    pipe_c.send("FIN")
-
-# --- Analizador general (frecuencia, presión u oxígeno) ---
-def analizador(nombre, campo, pipe, queue):
-    ventana = []
-
-    while True:
-        data = pipe.recv()
-        if data == "FIN":
-            break
-
-        if campo == "Presion Sanguinea":
-            valor = data["Presion Sanguinea"][0]  # presión sistólica
-        else:
-            valor = data[campo]
-
-        ventana.append(valor)
-        if len(ventana) > 30:
-            ventana.pop(0)
-
-        media = statistics.mean(ventana)
-        desv = statistics.stdev(ventana) if len(ventana) > 1 else 0.0
-
-        resultado = {
-            "tipo": campo,
-            "timestamp": data["timestamp"],
-            "media": round(media, 2),
-            "desv": round(desv, 2)
-        }
-
-        queue.put(resultado)
-        print(f"[{nombre}] Resultado: {resultado}")
-
-# --- Proceso principal ---
 def main():
-    # Pipes (unidireccionales)
-    a_principal, a_analizador = multiprocessing.Pipe()
-    b_principal, b_analizador = multiprocessing.Pipe()
-    c_principal, c_analizador = multiprocessing.Pipe()
+    # Crear Pipes para enviar datos a cada analizador
+    pipe_frec_env, pipe_frec_recv = multiprocessing.Pipe()
+    pipe_pres_env, pipe_pres_recv = multiprocessing.Pipe()
+    pipe_oxi_env, pipe_oxi_recv = multiprocessing.Pipe()
 
-    # Queues de salida (para el verificador futuro)
-    queue_a = multiprocessing.Queue()
-    queue_b = multiprocessing.Queue()
-    queue_c = multiprocessing.Queue()
+    # Crear colas de salida para recibir resultados de analizadores
+    queue_frecuencia = multiprocessing.Queue()
+    queue_presion = multiprocessing.Queue()
+    queue_oxigeno = multiprocessing.Queue()
+
+    # Cola para recibir la blockchain final desde el verificador
+    salida_blockchain = multiprocessing.Queue()
 
     # Procesos analizadores
-    proc_a = multiprocessing.Process(target=analizador, args=("Analizador A", "Frecuencia Cardiaca", a_analizador, queue_a))
-    proc_b = multiprocessing.Process(target=analizador, args=("Analizador B", "Presion Sanguinea", b_analizador, queue_b))
-    proc_c = multiprocessing.Process(target=analizador, args=("Analizador C", "Oxigeno en Sangre", c_analizador, queue_c))
+    proc_frec = multiprocessing.Process(target=analizador, args=("frecuencia_cardiaca", pipe_frec_recv, queue_frecuencia))
+    proc_pres = multiprocessing.Process(target=analizador, args=("presion_arterial", pipe_pres_recv, queue_presion))
+    proc_oxi = multiprocessing.Process(target=analizador, args=("oxigeno_sangre", pipe_oxi_recv, queue_oxigeno))
 
-    proc_a.start()
-    proc_b.start()
-    proc_c.start()
+    # Proceso verificador
+    proc_verificador = multiprocessing.Process(target=verificador, args=(queue_frecuencia, queue_presion, queue_oxigeno, salida_blockchain))
 
-    # Proceso generador
-    generador(a_principal, b_principal, c_principal)
+    # Iniciar procesos
+    proc_frec.start()
+    proc_pres.start()
+    proc_oxi.start()
+    proc_verificador.start()
 
-    proc_a.join()
-    proc_b.join()
-    proc_c.join()
+    # Generar y enviar datos
+    generador(pipe_frec_env, pipe_pres_env, pipe_oxi_env)
 
-    print("\n[Principal] Todos los procesos terminaron correctamente.")
+    # Esperar a que terminen los analizadores
+    proc_frec.join()
+    proc_pres.join()
+    proc_oxi.join()
+    proc_verificador.join()
+
+    # Recibir la blockchain desde el verificador
+    blockchain = salida_blockchain.get()
+
+    # Guardar blockchain en disco usando la función del módulo blockchain.py
+    agregar_resultados_a_blockchain(blockchain)
+
+    print("Blockchain guardada correctamente en 'blockchain.json'")
 
 if __name__ == "__main__":
     main()

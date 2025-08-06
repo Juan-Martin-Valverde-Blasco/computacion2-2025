@@ -1,0 +1,6 @@
+=== REPORTE DE BLOCKCHAIN BIOMÉTRICA ===
+Total de bloques (sin génesis): 549
+Bloques con alertas: 370
+Promedio frecuencia cardíaca: 123.14
+Promedio presión arterial: 143.59
+Promedio oxígeno en sangre: 95.2
