@@ -1,49 +1,50 @@
 import asyncio
-import aiohttp
 from aiohttp import web
-import socket
 import json
+from common.protocol import pack_message
+import socket
 
-HOST_B = '127.0.0.1'
-PORT_B = 9001
+SERVER_B_HOST = "127.0.0.1"
+SERVER_B_PORT = 9001
 
-async def fetch_from_B(data):
-    reader, writer = await asyncio.open_connection(HOST_B, PORT_B)
-    encoded = json.dumps(data).encode()
-    writer.write(len(encoded).to_bytes(8, byteorder='big'))
-    writer.write(encoded)
-    await writer.drain()
-    # recibir respuesta
-    raw_len = await reader.readexactly(8)
-    msg_len = int.from_bytes(raw_len, byteorder='big')
-    data_bytes = await reader.readexactly(msg_len)
-    writer.close()
-    await writer.wait_closed()
-    return json.loads(data_bytes.decode())
-
-async def scrape_handler(request):
-    url = request.query.get("url")
-    # mock scraping simple
-    scraping_data = {
-        "title": "Example Domain",
-        "links": ["https://iana.org/domains/example"],
-        "meta_tags": {"description": "", "keywords": ""},
-        "structure": {"h1": 1, "h2":0, "h3":0},
-        "images_count": 0
-    }
+async def call_server_b(data: dict) -> dict:
     try:
-        processing_data = await fetch_from_B({"url": url})
-        return web.json_response({
-            "url": url,
-            "scraping_data": scraping_data,
-            "processing_data": processing_data,
-            "status": "success"
-        })
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((SERVER_B_HOST, SERVER_B_PORT))
+            s.sendall(pack_message(data))
+            # leer respuesta completa
+            header = s.recv(4)
+            length = int.from_bytes(header, byteorder='big')
+            payload = b''
+            while len(payload) < length:
+                chunk = s.recv(length - len(payload))
+                if not chunk:
+                    break
+                payload += chunk
+            return json.loads(payload.decode('utf-8'))
     except Exception as e:
-        return web.json_response({"status":"error", "msg": str(e)})
+        return {"error": str(e)}
 
-app = web.Application()
-app.router.add_get('/scrape', scrape_handler)
+async def handle_scrape(request):
+    url = request.query.get("url")
+    if not url:
+        return web.json_response({"status": "error", "msg": "No URL provided"})
+    processing_request = {"url": url}
+    processing_data = await call_server_b(processing_request)
+    # devolvemos un resultado simple
+    result = {"url": url, "processing_data": processing_data, "status": "success"}
+    return web.json_response(result)
+
+async def main():
+    app = web.Application()
+    app.add_routes([web.get("/scrape", handle_scrape)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 8000)
+    await site.start()
+    print("Server A escuchando en 127.0.0.1:8000")
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    web.run_app(app, host="127.0.0.1", port=8000)
+    asyncio.run(main())
