@@ -1,79 +1,49 @@
-#!/usr/bin/env python3
-import argparse
 import asyncio
+import aiohttp
 from aiohttp import web
-from scraper.async_http import AsyncHTTPClient
-from scraper.html_parser import parse_html
-from datetime import datetime, timezone
-from common.protocol import pack_message
-import struct
+import socket
 import json
 
-# --------------------------
-# Función para recibir mensajes desde Servidor B (asyncio)
-# --------------------------
-async def unpack_message_async(reader: asyncio.StreamReader) -> dict:
-    LEN_HEADER = 4
-    header = await reader.readexactly(LEN_HEADER)
-    (length,) = struct.unpack(">I", header)
-    payload = await reader.readexactly(length)
-    return json.loads(payload.decode("utf-8"))
+HOST_B = '127.0.0.1'
+PORT_B = 9001
 
-# --------------------------
-# Comunicación con Servidor B
-# --------------------------
-async def process_with_server_b(url: str, host: str, port: int) -> dict:
-    reader, writer = await asyncio.open_connection(host, port)
-    # Enviar mensaje
-    writer.write(pack_message({"url": url}))
+async def fetch_from_B(data):
+    reader, writer = await asyncio.open_connection(HOST_B, PORT_B)
+    encoded = json.dumps(data).encode()
+    writer.write(len(encoded).to_bytes(8, byteorder='big'))
+    writer.write(encoded)
     await writer.drain()
-    # Leer respuesta asíncronamente
-    data = await unpack_message_async(reader)
+    # recibir respuesta
+    raw_len = await reader.readexactly(8)
+    msg_len = int.from_bytes(raw_len, byteorder='big')
+    data_bytes = await reader.readexactly(msg_len)
     writer.close()
     await writer.wait_closed()
-    return data
+    return json.loads(data_bytes.decode())
 
-# --------------------------
-# Handler HTTP para /scrape
-# --------------------------
-async def handle_scrape(request):
-    params = request.rel_url.query
-    url = params.get("url")
-    if not url:
-        return web.json_response({"status":"error","msg":"Missing url"}, status=400)
-
+async def scrape_handler(request):
+    url = request.query.get("url")
+    # mock scraping simple
+    scraping_data = {
+        "title": "Example Domain",
+        "links": ["https://iana.org/domains/example"],
+        "meta_tags": {"description": "", "keywords": ""},
+        "structure": {"h1": 1, "h2":0, "h3":0},
+        "images_count": 0
+    }
     try:
-        # Scraping de la página
-        html = await AsyncHTTPClient.fetch(url)
-        scraping_data = parse_html(html, base_url=url)
-
-        # Procesamiento CPU-bound en Servidor B
-        processing_data = await process_with_server_b(url, "127.0.0.1", 9001)
-
-        response = {
+        processing_data = await fetch_from_B({"url": url})
+        return web.json_response({
             "url": url,
-            "timestamp": datetime.now(timezone.utc).isoformat(),  # timezone-aware UTC
             "scraping_data": scraping_data,
             "processing_data": processing_data,
             "status": "success"
-        }
-        return web.json_response(response)
-
+        })
     except Exception as e:
-        return web.json_response({"status":"error","msg": str(e)}, status=500)
+        return web.json_response({"status":"error", "msg": str(e)})
 
-# --------------------------
-# Main
-# --------------------------
-def main():
-    parser = argparse.ArgumentParser(description="Servidor de Scraping Web Asíncrono")
-    parser.add_argument("-i","--ip", required=True, help="Dirección de escucha (IPv4/IPv6)")
-    parser.add_argument("-p","--port", required=True, type=int, help="Puerto de escucha")
-    args = parser.parse_args()
-
-    app = web.Application()
-    app.router.add_get("/scrape", handle_scrape)
-    web.run_app(app, host=args.ip, port=args.port)
+app = web.Application()
+app.router.add_get('/scrape', scrape_handler)
 
 if __name__ == "__main__":
-    main()
+    web.run_app(app, host="127.0.0.1", port=8000)

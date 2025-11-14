@@ -1,39 +1,45 @@
-import argparse
-import socketserver
+# server_processing.py
+import socket
 import json
-from multiprocessing import Pool
-from processor.screenshot import generate_screenshot_placeholder
-from processor.performance import analyze_performance
-from processor.image_processor import generate_thumbnails
-from common.protocol import pack_message, unpack_message_from_socket
+import time
 
-def process_task(data):
-    url = data['url']
-    return {
-        "screenshot": generate_screenshot_placeholder(url),
-        "performance": analyze_performance(url),
-        "thumbnails": generate_thumbnails(url)
-    }
+HOST = '127.0.0.1'
+PORT = 9001
 
-class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        try:
-            data = unpack_message_from_socket(self.request)
-            with Pool() as pool:
-                result = pool.apply(process_task, (data,))
-            self.request.sendall(pack_message(result))
-        except Exception as e:
-            self.request.sendall(pack_message({"error": str(e)}))
+def send_msg(conn, data):
+    encoded = json.dumps(data).encode()
+    length = len(encoded)
+    conn.sendall(length.to_bytes(8, byteorder='big'))  # enviar largo 8 bytes
+    conn.sendall(encoded)
 
-def main():
-    parser = argparse.ArgumentParser(description="Servidor de Procesamiento Distribuido")
-    parser.add_argument("-i","--ip", required=True, help="IP de escucha")
-    parser.add_argument("-p","--port", required=True, type=int, help="Puerto de escucha")
-    args = parser.parse_args()
+def recv_msg(conn):
+    raw_len = conn.recv(8)
+    if not raw_len:
+        return None
+    msg_len = int.from_bytes(raw_len, byteorder='big')
+    data = b''
+    while len(data) < msg_len:
+        packet = conn.recv(msg_len - len(data))
+        if not packet:
+            return None
+        data += packet
+    return json.loads(data.decode())
 
-    server = socketserver.ThreadingTCPServer((args.ip, args.port), ThreadedTCPRequestHandler)
-    print(f"Servidor B escuchando en {args.ip}:{args.port}")
-    server.serve_forever()
-
-if __name__ == "__main__":
-    main()
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    s.bind((HOST, PORT))
+    s.listen()
+    print(f"[B] Escuchando en {HOST}:{PORT}")
+    while True:
+        conn, addr = s.accept()
+        with conn:
+            print(f"[B] Conexión recibida de {addr}")
+            request = recv_msg(conn)
+            print(f"[B] Procesando solicitud: {request}")
+            time.sleep(1.5)  # simular procesamiento
+            result = {
+                "screenshot": "mock_base64_image",
+                "performance": {"load_time_ms": 123, "total_size_kb": 456, "num_requests": 7},
+                "thumbnails": []
+            }
+            send_msg(conn, result)
+            print("[B] Resultado enviado y conexión cerrada")
