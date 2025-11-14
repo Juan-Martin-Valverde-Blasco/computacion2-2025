@@ -1,0 +1,42 @@
+# Entornos virtuales
+env/
+venv/
+*.venv
+
+# Archivos compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs y temporales
+*.log
+*.tmp
+*.swp
+*.bak
+
+# Archivos de configuración locales
+*.env
+*.DS_Store
+
+# Selenium / Chromedriver / geckodriver
+chromedriver*
+geckodriver*
+*.exe
+
+# Pytest / testing
+htmlcov/
+.coverage
+*.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# Cachés
+*.sqlite
+*.db
+*.cache
+
+# Archivos de sistema
+Thumbs.db
